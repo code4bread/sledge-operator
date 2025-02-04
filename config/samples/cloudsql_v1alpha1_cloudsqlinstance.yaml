@@ -1,0 +1,9 @@
+apiVersion: cloudsql.uipath.studio/v1alpha1
+kind: CloudSQLInstance
+metadata:
+  labels:
+    app.kubernetes.io/name: sledge-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: cloudsqlinstance-sample
+spec:
+  # TODO(user): Add fields here
