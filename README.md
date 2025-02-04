@@ -1,114 +1,100 @@
-# sledge-operator
-// TODO(user): Add simple overview of use/purpose
+# Sledge Operator
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+The Sledge Operator is a Kubernetes operator (built with [Kubebuilder] that manages Cloud SQL instances in GCP using the [`sledge` CLI](https://github.com/code4bread/sledge). This operator supports create, update, describe, and delete operations on Cloud SQL instances.
 
-## Getting Started
+## Overview
 
-### Prerequisites
-- go version v1.22.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+- **CRD**: `CloudSQLInstance` defines the desired state of a Cloud SQL instance.
+- **Controller**: On each reconcile, it calls `sledge` subcommands (`describe`, `create`, `update`, `delete`) to ensure the GCP resource matches the CR’s spec.
+- **Finalizer**: Ensures that when you delete a `CloudSQLInstance` CR, `sledge delete` is called, preventing orphaned resources in GCP.
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+## Prerequisites
 
-```sh
-make docker-build docker-push IMG=<some-registry>/sledge-operator:tag
-```
+- **Go 1.20+** (or whichever version matches your Kubebuilder environment).
+- **Docker** (for building container images).
+- **Kubebuilder** installed.
+- **Google Cloud** credentials (for `sledge` to interact with GCP).
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+## Building Sledge (Locally)
 
-**Install the CRDs into the cluster:**
+If you have the [Sledge](https://github.com/code4bread/sledge) code separately:
 
-```sh
-make install
-```
+1. Clone or obtain sledge.
+2. `go build -o sledge ./cmd/sledge`
+3. Move the resulting `sledge` binary into this `sledge-operator` directory so Docker can copy it.
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
+## Building & Deploying the Operator
 
-```sh
-make deploy IMG=<some-registry>/sledge-operator:tag
-```
+1. **Generate manifests**:
+   ```bash
+   make generate
+   make manifests
+   ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
+2. **Build** the Docker image (replacing with your registry):
+   ```bash
+   docker build -t your-registry/sledge-operator:latest .
+   ```
 
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
+3. **Usage**
 
-```sh
-kubectl apply -k config/samples/
-```
+    Create a CloudSQLInstance
 
->**NOTE**: Ensure that the samples has default values to test it out.
+    Write a file my-db.yaml:
+    ```yaml
+    apiVersion: cloudsql.uipath.studio/v1alpha1
+    kind: CloudSQLInstance
+    metadata:
+      name: my-db
+    spec:
+      projectID: "my-gcp-project"
+      instanceName: "my-db-instance"
+      region: "us-central1"
+      databaseVersion: "MYSQL_8_0"
+      tier: "db-f1-micro"
+    ```
 
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
+4. **Apply It**
 
-```sh
-kubectl delete -k config/samples/
-```
+   ```bash  
+   kubectl apply -f my-db.yaml
+   ```
 
-**Delete the APIs(CRDs) from the cluster:**
+5. **Check Status** 
+   ```bash
+   kubectl get cloudsqlinstance my-db -o yaml
+   ```
 
-```sh
-make uninstall
-```
+6. **Status**
 
-**UnDeploy the controller from the cluster:**
+    ```yaml
+    status:
+      phase: Ready
+      message: "Instance is up-to-date"
+      dbVersion: "MYSQL_8_0"
+      state: "RUNNABLE"
+      ipAddress: "104.154.xxx.xxx"
+    ```
 
-```sh
-make undeploy
-```
+7. **Update**
 
-## Project Distribution
+   Change a field in spec (e.g., dbVersion or tier). The operator detects the difference and calls sledge update.
 
-Following are the steps to build the installer and distribute this project to users.
+8. **Delete**
 
-1. Build the installer for the image built and published in the registry:
+   The operator’s finalizer calls sledge delete before removing the CR from Kubernetes, preventing orphaned instances in GCP.
+   ```bash
+   kubectl delete cloudsqlinstance my-db
+   ```
 
-```sh
-make build-installer IMG=<some-registry>/sledge-operator:tag
-```
+### Potential Issues & Notes
 
-NOTE: The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without
-its dependencies.
+    1. **Valid JSON:** The operator expects `sledge describe` to output valid JSON without logs or extra text.
+    2. **Credentials:** The operator container must have GCP credentials so sledge can authenticate.
+    3. **Region Changes:** If `sledge update` doesn’t handle region changes, the operator may return an error when the region is altered.
+    4. **Performance:** Each reconcile spawns a sledge process. For many CRs or frequent changes, consider caching or using slower requeues.
+    5. **Exit Codes:** If sledge returns a non-zero exit code, the operator marks the CR in an error phase, logging the combined output.
 
-2. Using the installer
+ ## License
 
-Users can just run kubectl apply -f <URL for YAML BUNDLE> to install the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/sledge-operator/<tag or branch>/dist/install.yaml
-```
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
-
-## License
-
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-
+This project is licensed under the MIT License.
