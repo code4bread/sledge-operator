@@ -1,0 +1,1 @@
+ docker build -t code4bread/sledge-operator:latest .
