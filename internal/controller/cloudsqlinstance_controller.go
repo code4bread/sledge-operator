@@ -29,7 +29,9 @@ type SledgeDescribeOutput struct {
 	Region          string `json:"region"`
 	DatabaseVersion string `json:"databaseVersion"`
 	State           string `json:"state"`
-	Tier            string `json:"tier"`
+	Settings struct {
+		Tier string `json:"tier"`
+	  } `json:"settings"`
 	IpAddresses     []struct {
 		IPAddress string `json:"ipAddress"`
 	} `json:"ipAddresses"`
@@ -177,7 +179,7 @@ func (r *CloudSQLInstanceReconciler) sledgeCreate(cr cloudsqlv1alpha1.CloudSQLIn
 
 func (r *CloudSQLInstanceReconciler) sledgeUpdate(cr *cloudsqlv1alpha1.CloudSQLInstance) error {
 	args := []string{
-		"update",
+		"upgrade",
 		"--project=" + cr.Spec.ProjectID,
 		"--instance=" + cr.Spec.InstanceName,
 		"--dbVersion=" + cr.Spec.DatabaseVersion,
@@ -211,16 +213,15 @@ func (r *CloudSQLInstanceReconciler) needsUpdate(
 	cr *cloudsqlv1alpha1.CloudSQLInstance,
 	desc SledgeDescribeOutput,
 ) bool {
+	log.Printf("Comparing desc.Settings.Tier=%q vs spec.Tier=%q, desc.DBVersion=%q vs spec.DBVersion=%q",
+    desc.Settings.Tier, cr.Spec.Tier, desc.DatabaseVersion, cr.Spec.DatabaseVersion)
+
 	if desc.DatabaseVersion != cr.Spec.DatabaseVersion {
 		return true
 	}
-	if desc.Region != cr.Spec.Region {
-		return true
-	}
-	// Compare more fields, e.g. tier, settings, etc.
-	if desc.Tier != cr.Spec.Tier {
-		return true
-	}
+    if desc.Settings.Tier != cr.Spec.Tier {
+        return true
+    }
 	return false
 }
 

@@ -1,0 +1,11 @@
+apiVersion: cloudsql.uipath.studio/v1alpha1
+kind: CloudSQLInstance
+metadata:
+  name: amar-db-server
+  namespace: sledge-operator-system
+spec:
+  projectID: "uipath-amar"
+  instanceName: "uipath-task-instance"
+  region: "us-central1"
+  databaseVersion: "MYSQL_8_0"
+  tier: "db-g1-small"
