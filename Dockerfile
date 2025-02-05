@@ -34,6 +34,10 @@
     # Copy the precompiled 'sledge' binary from your local build
     # Assumes you have placed the binary at the root of the build context, e.g. 'sledge-operator/sledge'
     COPY sledge /usr/local/bin/sledge
+    COPY uipath-amar-ed501cd5a389.json /etc/creds/uipath-amar-ed501cd5a389.json
+
+    # Set environment variable so sledge (and the operator) uses these creds
+    ENV GOOGLE_APPLICATION_CREDENTIALS="/etc/creds/uipath-amar-ed501cd5a389.json"
     
     USER 65532:65532
     ENTRYPOINT ["/manager"]

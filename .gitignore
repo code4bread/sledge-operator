@@ -6,6 +6,7 @@
 *.dylib
 bin/*
 Dockerfile.cross
+uipath-amar-ed501cd5a389.json
 
 # Test binary, built with `go test -c`
 *.test
