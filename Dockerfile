@@ -34,6 +34,11 @@
     # Copy the precompiled 'sledge' binary from your local build
     # Assumes you have placed the binary at the root of the build context, e.g. 'sledge-operator/sledge'
     COPY sledge /usr/local/bin/sledge
+    # Copy your service account file into /etc/creds
+    COPY service-account.json /etc/creds/service-account.json
+
+    # Set environment variable so sledge (and the operator) uses these creds
+    ENV GOOGLE_APPLICATION_CREDENTIALS="/etc/creds/service-account.json"
     
     USER 65532:65532
     ENTRYPOINT ["/manager"]
