@@ -5,4 +5,4 @@ kind: Kustomization
 images:
 - name: controller
   newName: code4bread/sledge-operator
-  newTag: local_v2
+  newTag: local_v6

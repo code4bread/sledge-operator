@@ -8,4 +8,4 @@ spec:
   instanceName: "uipath-task-instance"
   region: "us-central1"
   databaseVersion: "MYSQL_8_0"
-  tier: "db-f1-micro"
+  tier: "db-g1-small"

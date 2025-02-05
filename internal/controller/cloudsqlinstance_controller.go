@@ -7,11 +7,12 @@ import (
 	"log"
 	"os/exec"
 	"strings"
+	"time"
 
 	cloudsqlv1alpha1 "github.com/code4bread/sledge-operator/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client" 
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const cloudSQLFinalizer = "cloudsql.uipath.studio/finalizer"
@@ -21,40 +22,45 @@ type CloudSQLInstanceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
 }
+
 // SledgeDescribeOutput holds the JSON fields from sledge describe
 type SledgeDescribeOutput struct {
-    Name            string `json:"name"`
-    Region          string `json:"region"`
-    DatabaseVersion string `json:"databaseVersion"`
-    State           string `json:"state"`
-    IpAddresses     []struct {
-        IPAddress string `json:"ipAddress"`
-    } `json:"ipAddresses"`
+	Name            string `json:"name"`
+	Region          string `json:"region"`
+	DatabaseVersion string `json:"databaseVersion"`
+	State           string `json:"state"`
+	Tier            string `json:"tier"`
+	IpAddresses     []struct {
+		IPAddress string `json:"ipAddress"`
+	} `json:"ipAddresses"`
 }
 
 // Reconcile is the main logic
 func (r *CloudSQLInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	var cr cloudsqlv1alpha1.CloudSQLInstance
 	if err := r.Get(ctx, req.NamespacedName, &cr); err != nil {
+		// Ignore not-found errors since we can't do anything anyway
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-  
+
+	log.Printf("Reconciling CloudSQLInstance %s\n %s\n", req.NamespacedName,cr.Spec)
+     
 	// 1. Check if being deleted
 	if !cr.ObjectMeta.DeletionTimestamp.IsZero() {
 		return r.handleDeletion(ctx, &cr)
 	}
 
-	// 2. Ensure finalizer
+	// 2. Ensure finalizer is present
 	if !containsString(cr.Finalizers, cloudSQLFinalizer) {
 		cr.Finalizers = append(cr.Finalizers, cloudSQLFinalizer)
 		if err := r.Update(ctx, &cr); err != nil {
 			return ctrl.Result{}, err
 		}
-		// Return so next reconcile sees finalizer in place
+		// Return here so next reconcile sees finalizer in place
 		return ctrl.Result{}, nil
 	}
 
-	// 3. Sledge describe
+	// 3. Call sledge describe
 	describeOut, err := r.sledgeDescribe(cr.Spec.ProjectID, cr.Spec.InstanceName)
 	if err != nil {
 		// If indicates not found => create
@@ -76,15 +82,7 @@ func (r *CloudSQLInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 	}
 
 	// 4. Parse describe output into JSON struct
-	var desc struct {
-		Name            string `json:"name"`
-		Region          string `json:"region"`
-		DatabaseVersion string `json:"databaseVersion"`
-		State           string `json:"state"`
-		IpAddresses     []struct {
-			IPAddress string `json:"ipAddress"`
-		} `json:"ipAddresses"`
-	}
+	var desc SledgeDescribeOutput
 	if unErr := json.Unmarshal([]byte(describeOut), &desc); unErr != nil {
 		log.Printf("Failed to parse JSON from sledge describe: %v\n%s\n", unErr, describeOut)
 	} else {
@@ -95,20 +93,38 @@ func (r *CloudSQLInstanceReconciler) Reconcile(ctx context.Context, req ctrl.Req
 		}
 	}
 
+	// 5. If the CloudSQL instance is in an in-progress state, we requeue
+	switch desc.State {
+	case "PENDING_CREATE", "MAINTENANCE", "BACKUP_IN_PROGRESS":
+		cr.Status.Phase = "Pending"
+		cr.Status.Message = fmt.Sprintf("Instance is in %s state; re-checking in 20s.", desc.State)
+		_ = r.Status().Update(ctx, &cr)
+		return ctrl.Result{RequeueAfter: 20 * time.Second}, nil
 
-	// 5. Decide if we need to call update
-	if r.needsUpdate(&cr, desc) {
+	case "RUNNABLE":
+		// It's fully operational
+		cr.Status.Phase = "Ready"
+		cr.Status.Message = "Instance is fully operational."
+
+	default:
+		// Some unknown or error state
+		cr.Status.Phase = "Error"
+		cr.Status.Message = fmt.Sprintf("Unexpected instance state: %s", desc.State)
+	}
+
+	_ = r.Status().Update(ctx, &cr)
+
+	// 6. Decide if we need to call update, only if not pending or error
+	if desc.State == "RUNNABLE" && r.needsUpdate(&cr, desc) {
 		log.Println("Specs differ from actual. Updating with sledge update...")
-		if upErr := r.sledgeUpdate(cr); upErr != nil {
+		if upErr := r.sledgeUpdate(&cr); upErr != nil {
 			r.setStatusError(&cr, "ErrorUpdating", upErr.Error())
 			_ = r.Status().Update(ctx, &cr)
-			return ctrl.Result{}, upErr
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, upErr
 		}
 		r.setStatusReady(&cr, "Instance updated")
-	} else {
-		r.setStatusReady(&cr, "Instance in sync")
+		_ = r.Status().Update(ctx, &cr)
 	}
-	_ = r.Status().Update(ctx, &cr)
 
 	return ctrl.Result{}, nil
 }
@@ -131,7 +147,7 @@ func (r *CloudSQLInstanceReconciler) handleDeletion(ctx context.Context, cr *clo
 	return ctrl.Result{}, nil
 }
 
-// -------------- sledge exec calls -------------- //
+// ------------------ sledge exec calls ------------------ //
 
 func (r *CloudSQLInstanceReconciler) sledgeDescribe(project, instance string) (string, error) {
 	cmd := exec.Command("sledge", "describe", "--project="+project, "--instance="+instance)
@@ -159,7 +175,7 @@ func (r *CloudSQLInstanceReconciler) sledgeCreate(cr cloudsqlv1alpha1.CloudSQLIn
 	return nil
 }
 
-func (r *CloudSQLInstanceReconciler) sledgeUpdate(cr cloudsqlv1alpha1.CloudSQLInstance) error {
+func (r *CloudSQLInstanceReconciler) sledgeUpdate(cr *cloudsqlv1alpha1.CloudSQLInstance) error {
 	args := []string{
 		"update",
 		"--project=" + cr.Spec.ProjectID,
@@ -189,10 +205,9 @@ func (r *CloudSQLInstanceReconciler) sledgeDelete(project, instance string) erro
 	return nil
 }
 
-// -------------- Utility -------------- //
+// ------------------ utility methods ------------------ //
 
-
- func (r *CloudSQLInstanceReconciler) needsUpdate(
+func (r *CloudSQLInstanceReconciler) needsUpdate(
 	cr *cloudsqlv1alpha1.CloudSQLInstance,
 	desc SledgeDescribeOutput,
 ) bool {
@@ -202,9 +217,12 @@ func (r *CloudSQLInstanceReconciler) sledgeDelete(project, instance string) erro
 	if desc.Region != cr.Spec.Region {
 		return true
 	}
+	// Compare more fields, e.g. tier, settings, etc.
+	if desc.Tier != cr.Spec.Tier {
+		return true
+	}
 	return false
 }
-
 
 func (r *CloudSQLInstanceReconciler) setStatusReady(cr *cloudsqlv1alpha1.CloudSQLInstance, msg string) {
 	cr.Status.Phase = "Ready"
@@ -235,6 +253,7 @@ func removeString(slice []string, s string) []string {
 	return result
 }
 
+// SetupWithManager sets up the controller with the Manager.
 func (r *CloudSQLInstanceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&cloudsqlv1alpha1.CloudSQLInstance{}).
